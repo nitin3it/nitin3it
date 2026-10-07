@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// profiles/{uid}_{role}               one profile per account per role
+// profiles/{childId}/usage/{date}     the child's app usage for one day
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsProfile(profileId) {
+      return signedIn() &&
+        (profileId == request.auth.uid + '_child' || profileId == request.auth.uid + '_parent');
+    }
+
+    // True when the caller's parent profile has linked this child.
+    function isLinkedParent(childId) {
+      let parentPath = /databases/$(database)/documents/profiles/$(request.auth.uid + '_parent');
+      return signedIn() && exists(parentPath) && childId in get(parentPath).data.linkedChildren;
+    }
+
+    match /profiles/{profileId} {
+      // Any signed-in user may look up a profile so parents can find a child by Child ID.
+      allow read: if signedIn();
+      allow create, update: if ownsProfile(profileId) && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if ownsProfile(profileId);
+
+      match /usage/{day} {
+        allow read: if ownsProfile(profileId) || isLinkedParent(profileId);
+        allow write: if signedIn() && profileId == request.auth.uid + '_child';
+      }
+    }
+  }
+}
